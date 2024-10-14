@@ -1,7 +1,5 @@
 package lexer
 
-import "errors"
-
 type Lexer interface {
 	Lex(input string) ([]Token, error)
 }
@@ -11,14 +9,6 @@ type Token interface {
 	Type() int
 }
 
-type SimpleTokenType int
-
-const (
-	TT_KEYWORD SimpleTokenType = iota
-	TT_IDENT
-	TT_SYMBOL
-)
-
 type SimpleToken struct {
 	ttype SimpleTokenType
 	lit   string
@@ -27,6 +17,12 @@ type SimpleToken struct {
 func (t SimpleToken) String() string { return t.lit }
 
 func (t SimpleToken) Type() int { return int(t.ttype) }
+
+type SimpleTokenType int
+
+const (
+	TT_CHARACTER SimpleTokenType = iota
+)
 
 type SimpleLexer struct {
 }
@@ -46,35 +42,8 @@ func (l *SimpleLexer) Lex(input string) ([]Token, error) {
 			i++
 		}
 
-		if isCharacter(runes[i]) {
-			t := SimpleToken{ttype: TT_IDENT}
-
-			for i := i; i < len(runes) && isCharacter(runes[i]); i++ {
-				t.lit += string(runes[i])
-			}
-
-			i += len(t.lit)
-
-			res = append(res, t)
-
-			continue
-		}
-
-		if isSymbol(runes[i]) {
-			s := runes[i]
-
-			if s == '=' {
-				t := SimpleToken{ttype: TT_SYMBOL}
-				t.lit = "="
-				i++
-
-				res = append(res, t)
-
-				continue
-			}
-		}
-
-		return nil, errors.New("cannot lex")
+		res = append(res, SimpleToken{TT_CHARACTER, string(runes[i])})
+		i++
 	}
 
 	return res, nil

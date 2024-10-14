@@ -1,4 +1,4 @@
-package main
+package pargo
 
 func Sequence1[T0, O any](psT0 Parser[T0], mapper func(T0) O) Parser[O] {
 	return func(state State) (O, State, error) {

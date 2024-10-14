@@ -1,8 +1,8 @@
-package main
+package pargo
 
 import (
 	"errors"
-	"fmt"
+	"io"
 
 	"parser-comb/lexer"
 )
@@ -12,16 +12,25 @@ type State struct {
 	pos    int
 }
 
-func (s *State) consume() {
+func (s *State) consume() (lexer.Token, error) {
+	if s.pos >= len(s.tokens) {
+		return nil, io.EOF
+	}
+
+	val := s.tokens[s.pos]
 	s.pos++
+
+	return val, nil
 }
 
-func (s *State) Done() bool {
-	return s.pos >= len(s.tokens)
-}
+func (s *State) peek() (lexer.Token, error) {
+	if s.pos >= len(s.tokens) {
+		return nil, io.EOF
+	}
 
-func (s *State) current() lexer.Token {
-	return s.tokens[s.pos]
+	val := s.tokens[s.pos]
+
+	return val, nil
 }
 
 type Parser[T any] func(state State) (T, State, error)
@@ -30,33 +39,40 @@ var errNoMatch = errors.New("No match")
 
 func Exactly(s string) Parser[string] {
 	return func(state State) (string, State, error) {
-		if state.current().String() == s {
-			state.consume()
-			return s, state, nil
+		old := state
+
+		tok, err := state.consume()
+		if err != nil {
+			return "", old, err
 		}
 
-		return "", state, errNoMatch
+		if tok.String() != s {
+			return "", old, errNoMatch
+		}
+
+		return s, state, nil
 	}
 }
 
-func Token(tokenType int) Parser[lexer.Token] {
-	return func(state State) (lexer.Token, State, error) {
-		t := state.current()
+func Except(s string) Parser[string] {
+	return func(state State) (string, State, error) {
+		old := state
 
-		if t.Type() == tokenType {
-			state.consume()
-
-			return t, state, nil
+		tok, err := state.consume()
+		if err != nil {
+			return "", old, err
 		}
 
-		return t, state, errNoMatch
+		if tok.String() == s {
+			return "", old, errNoMatch
+		}
+
+		return tok.String(), state, nil
 	}
 }
 
 func OneOf[T any](parsers ...Parser[T]) Parser[T] {
 	return func(state State) (T, State, error) {
-		old := state
-
 		for _, p := range parsers {
 			res, state, err := p(state)
 			if err == nil {
@@ -64,7 +80,7 @@ func OneOf[T any](parsers ...Parser[T]) Parser[T] {
 			}
 		}
 
-		return zero[T](), old, errNoMatch
+		return zero[T](), state, errNoMatch
 	}
 }
 
@@ -79,15 +95,38 @@ func Parse[T any](p Parser[T], l lexer.Lexer, input string) (T, error) {
 	return res, err
 }
 
-func Map[T, U any](p Parser[T], f func(T) U) Parser[U] {
+func Map[T, U any](p Parser[T], f func(T) (U, error)) Parser[U] {
 	return func(state State) (U, State, error) {
-		res, newState, err := p(state)
+		res, state, err := p(state)
 		if err != nil {
 			return zero[U](), state, err
 		}
 
-		return f(res), newState, err
+		mapped, err := f(res)
+		if err != nil {
+			return zero[U](), state, err
+		}
+
+		return mapped, state, err
 	}
+}
+
+func ManySep[T any, S any](p Parser[T], separator Parser[S]) Parser[[]T] {
+	return Sequence2(
+		Many(
+			Sequence2(
+				p,
+				separator,
+				func(a T, _ S) T {
+					return a
+				},
+			),
+		),
+		p,
+		func(a []T, b T) []T {
+			return append(a, b)
+		},
+	)
 }
 
 func Sequence[T any, O any](mapper func(T) O, psT Parser[T]) Parser[O] {
@@ -107,53 +146,52 @@ func Many[T any](p Parser[T]) Parser[[]T] {
 	return func(state State) ([]T, State, error) {
 		var res []T
 		var err error
+		var r T
 
 		for {
-			var r T
 			r, state, err = p(state)
 			if err != nil {
 				return res, state, nil
 			}
 			res = append(res, r)
+		}
+	}
+}
 
-			if state.Done() {
+func Some[T any](p Parser[T]) Parser[[]T] {
+	return func(state State) ([]T, State, error) {
+		first, state, error := p(state)
+		if error != nil {
+			return zero[[]T](), state, error
+		}
+
+		res := []T{first}
+
+		var other T
+
+		for {
+			other, state, error = p(state)
+			if error != nil {
 				return res, state, nil
 			}
+			res = append(res, other)
 		}
+	}
+}
+
+func Lazy[T any](f func() Parser[T]) Parser[T] {
+	var p Parser[T]
+
+	return func(state State) (T, State, error) {
+		if p == nil {
+			p = f()
+		}
+
+		return p(state)
 	}
 }
 
 func zero[T any]() T {
 	var t T
 	return t
-}
-
-var valueParser = Many(
-	Sequence3(
-		Token(int(lexer.TT_IDENT)),
-		Exactly("="),
-		Map(
-			OneOf(
-				Exactly("true"),
-				Exactly("false"),
-			),
-			func(s string) bool {
-				if "true" == s {
-					return true
-				}
-				return false
-			},
-		),
-		func(t lexer.Token, s string, b bool) string {
-			return t.String() + fmt.Sprintf("%t", b)
-		},
-	),
-)
-
-func main() {
-	p, err := Parse(valueParser, lexer.NewSimple(), "x = true y = false")
-	if err != nil {
-		panic(err)
-	}
-	fmt.Println(p)
 }
