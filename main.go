@@ -129,6 +129,19 @@ func ManySep[T any, S any](p Parser[T], separator Parser[S]) Parser[[]T] {
 	)
 }
 
+func Transform[T any, O any](p Parser[T], mapper func(T) O) Parser[O] {
+	return func(state State) (O, State, error) {
+		resT, newState, err := p(state)
+		if err != nil {
+			return zero[O](), state, err
+		}
+
+		res := mapper(resT)
+
+		return res, newState, nil
+	}
+}
+
 func Sequence[T any, O any](mapper func(T) O, psT Parser[T]) Parser[O] {
 	return func(state State) (O, State, error) {
 		resT, newState, err := psT(state)
